@@ -1,0 +1,70 @@
+---
+- hosts: test
+  remote_user: root  
+  tasks:
+  - name: 启用 ip_conntrack
+    shell: modprobe ip_conntrack
+
+  - name: 备份原有文件
+    shell: | 
+      cp -a /sys/kernel/mm/transparent_hugepage/enabled{,.bak}
+      cp -a /etc/profile{,.bak}
+
+  - name: 修改内核文件
+    copy:
+      src: conf/sysctl.conf
+      dest: /etc/sysctl.conf
+      backup: yes
+      owner: root
+      group: root
+      mode: 644
+
+  - name: 使内核优化生效
+    shell: sysctl -p && sysctl --system
+    ignore_errors: yes
+
+  - name: 开启HugePages
+    shell: echo always > /sys/kernel/mm/transparent_hugepage/enabled
+
+  - name: 修改system.conf
+    copy:
+      src: conf/system.conf
+      dest: /etc/systemd/system.conf
+      backup: yes
+      owner: root
+      group: root
+      mode: 644
+
+  - name: 修改连接数限制
+    copy:
+      src: conf/limits.conf
+      dest: /etc/security/limits.conf
+      backup: yes
+      owner: root
+      group: root
+      mode: 644
+
+  - name: 删除 ulimit
+    lineinfile:
+      path: /etc/profile
+      state: absent
+      regexp: 'ulimit -SHn'
+
+  - name: 优化 ulimit
+    shell: echo "ulimit -SHn 1000000" >> /etc/profile
+
+  - name: 检查是否有pam_limits.so
+    lineinfile:
+      path: /etc/pam.d/common-session
+      line: "pam_limits.so"
+    check_mode: yes
+    register: pam_limits_not_here
+    ignore_errors: true    
+
+  - name: 添加pam_limits.so到系统内核中
+    shell: echo "session required pam_limits.so" >> /etc/pam.d/common-session
+    when: pam_limits_not_here is failed 
+
+
+  - name: 重启systemctl
+    shell: systemctl daemon-reload
